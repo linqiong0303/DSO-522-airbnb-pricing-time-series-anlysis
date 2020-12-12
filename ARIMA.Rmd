@@ -1,0 +1,671 @@
+---
+title: "DSO 522 Group 5 Airbnb Pricing Analysis"
+author: "Group 5 (Evelyn (Wanyi) Dong, Qiongqiong Lin, Jenny Shang, Yoki (Lingrou) Wang) "
+date: "11/1/2020"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+header-includes: \usepackage{color}
+editor_options: 
+  chunk_output_type: console
+---
+
+\begin{center} 
+{\color{red} \textbf{DSO 522 Group 5 Airbnb Pricing Analysis}}
+\end{center}
+
+For this project, we want to study the impact of Covid-19 on the tourism industry by
+analyzing past price trends of Airbnb rental properties in the city of Oakland, California, and predict future rental prices by applying different time-series forecasting methods. We choose this topic because Airbnb rentals have seen significant growth in the past but are now struggling from booking declines due to Covid-19. We are interested in using time-series forecasting to predict future prices and provide valuable insights and recommendations to help Airbnb’s stakeholders develop a solid pricing strategy to achieve customer retention and sustainable growth. From a technical standpoint, Airbnb data is readily available on Airbnb’s official website (http://insideairbnb.com/get-the-data.html). It is pre-processed, well-structured and standardized, making it the ideal dataset to conduct our analysis.
+
+The complete dataset represents 722 Oakland average daily Airbnb house pricing from July 16, 2018 to July 16, 2020. 
+
+## Our analysis is built on three key objectives: 
+(1.) Understand the historical patterns of the Airbnb data by studying potential trends and  periodic components. 
+
+```{r}
+# import packages
+library(zoo)
+library(forecast)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+# read data
+data = read.csv("cleaned_data.csv")
+# set zoo object of price
+price = zoo(data$price, seq(from = as.Date("2018-07-16"), to = as.Date("2020-07-16"), by = 1))
+# plot the data
+autoplot(price, xlab=("Time"), ylab=("Average listing price"))
+```
+
+<<<<<<< HEAD
+```{r Loading Data in TS format}
+price.ts = ts(data$price, start = c(2018,197), frequency=365)
+
+# plot the data
+autoplot(price.ts,main='Airbnb Oakland Daily Pricing', 
+         xlab=("Time") , ylab=("Average listing price") )
+
+```
+
+1. Ask for advice on predicting daily v.s. monthly price of Oakland (monthly with very limited data points but does have monthly alternative data available)
+Depends on the scope of what we wanted to use them for.
+Using alternative data that's not on the same level of details - extrapolation issue - check to see what are their performances.
+
+
+** Look into why 2019 sharp drop
+** Qualitative external variable : use dummy variable to indicate those exceptional cases?
+2. Ask for clarification on COVID impact on model buildling - seperate models for post COVID?
+By looking at the data we seee a sharper decrease in 2019 compare with COVID's impact:
+* Build the model without 2020, and then make predictions in 2020
+
+We see that the coefficient is far away from 0 and P value also did not show statistical significance, which means this is not a random walk.
+
+Key findings 
+(-) The pricing data shows more variability in 2018 and 2020 than 2019. 
+(-) In 2018, the price shows a donward trend in the beginning, but resumes in November and reaches a peak in December (potential reason: Thanksgiving, Christmas and New Year).
+(-) In 2019, the listing price shows an upward trend. 
+(-) In 2020, the listing price drops in the beginning (potential reason: covid-19); however, starting from May, the price resumes and increases. 
+(-) Weekly seasonality is shown in the data. Since we only have two years data, it is hard to tell if there is a yearly seasonality. 
+
+Since we want to analyze the effect of Covid-19, we separate the data to pre-2020 and 2020-onwards, and separately construct models for each period. 
+
+```{r}
+# Separate the two periods
+pre_covid = window(price.ts, end = c(2020,12),frequency = 365)
+covid = window(price.ts, start = c(2020,13), frequency = 365)
+```
+
+(2.) Explore a variety of time-series models and determine the most appropriate candidate  model on the basis of accuracy and simplicity to analyze and forecast future prices. 
+
+**ARIMA**
+
+--------------------------------------------------------------------
+--Function 1--
+--------------------------------------------------------------------
+
+We set aside 60 days as validation set.
+
+```{r}
+nValid1 = 60
+nTrain1 = length(pre_covid)-nValid1
+pre_covid_train = window(pre_covid, end = c(2018,nTrain1+196),
+                         frequency = 365)
+pre_covid_valid = window(pre_covid, start = c(2018,(nTrain1+197)),
+                         frequency = 365)
+```
+
+
+Clearly there is a trend in the time series, which makes the time series non-stationary. As a result, we take a first-order differencing and check ACF and PACF graphs. 
+```{r}
+# check detrended price
+price.detrend = diff(pre_covid_train, lag = 1)
+autoplot(price.detrend)
+par(mfrow=c(1,2)) 
+Acf(price.detrend, 150) 
+Pacf(price.detrend, 150)
+par(mfrow=c(1,1)) 
+```
+From the ACF and PACF graphs of detrended data, we can see the PACF graph cuts off and ACF graph slowly tails off. However, since the ACF graph has spikes in seasonal lags and doesn't converge to 0, this suggests a weekly seasonality pattern in the data. These also appear to be non-stationary, so we take an additional weekly difference. 
+
+```{r}
+# check detrended and deseasoned price 
+price.detrend.deseason = diff(diff(pre_covid_train, lag = 1), lag=7)
+autoplot(price.detrend.deseason)
+par(mfrow=c(1,2)) 
+Acf(price.detrend.deseason, 150) 
+Pacf(price.detrend.deseason, 150)
+par(mfrow=c(1,1)) 
+```
+Our aim now is to find an appropriate ARIMA model baseds on the ACF and PACF graph show agove. The significant spike at lag 1 and no significant spikes immediately followed after lag 1 in the ACF suggests a non-seasonal MA(1) component, and the signiifcant spike at lag 7 in the ACF suggests a seasonal MA(1) component. Consequently, we begin with a SARIMA(0,1,1)(0,1,1)[7] model, indicating a first and seasonal difference, and non-seasonal and seasonal MA(1) components.
+
+By analogous logic applied to the PACF, there is a significant spike in lag 1, followed by an almost significant spike at lag 2, which doesn't indicate a non-seasonal AR term that we are interested in. The significant pike at lag 7 in the PACF suggest a seasonal AR(1) component. As a result, we could have another SARIMA(0,1,0)(1,1,0)[7] model. 
+
+By combining the AR and MA terms together, we could have a third SARIMA(0,1,1)(1,1,1)[7] model, and a fourth SARIMA(1,1,1)(1,1,1) to validate our assumption about the AR term. 
+
+Finally, we try an AutoArima model to search over possible models.
+
+Function 1 predictions
+Create a loop that repeated does 30 day forecasting pulling in one additional data at a time.
+
+(1) SARIMA(0,1,1)(0,1,1)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima1_mape_train = rep(NA,numValid)
+arima1_mape_test = rep(NA, numValid)
+arima1_rmse_train = rep(NA,numValid)
+arima1_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(pre_covid_train) + i
+  train.ts = window(pre_covid, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima1 = Arima(train.ts, order=c(0,1,1), seasonal = list(order=c(0,1,1), period=7))
+
+  # Make prediction
+  pred = forecast(arima1, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima1_mape_train[i] = summary(arima1)[5]
+  arima1_mape_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[5]
+  
+  arima1_rmse_train[i] = summary(arima1)[2]
+  arima1_rmse_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima1_rmse_train)
+mean(arima1_rmse_test)
+mean(arima1_mape_train)
+mean(arima1_mape_test)
+```
+
+```{r}
+pre_covid_arima = Arima(pre_covid, order=c(0,1,1), seasonal = list(order=c(0,1,1), period=7))
+pre_covid_arima_forecast = forecast(pre_covid_arima, h=length(covid))
+autoplot(pre_covid, main = "Observed v.s. Predicted Using Pre-covid data") +
+  autolayer(covid, series = "Observed")+
+  autolayer(pre_covid_arima_forecast, series = "Predicted", level=0)+
+  ylim(100, 140)
+```
+
+
+(2) SARIMA(0,1,0)(1,1,0)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima2_mape_train = rep(NA,numValid)
+arima2_mape_test = rep(NA, numValid)
+arima2_rmse_train = rep(NA,numValid)
+arima2_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(pre_covid_train) + i
+  train.ts = window(pre_covid, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima2 = Arima(train.ts, order=c(0,1,0), seasonal = list(order=c(1,1,0), period=7))
+
+  # Make prediction
+  pred = forecast(arima2, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima2_mape_train[i] = summary(arima2)[5]
+  arima2_mape_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[5]
+  
+  arima2_rmse_train[i] = summary(arima2)[2]
+  arima2_rmse_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima2_rmse_train)
+mean(arima2_rmse_test)
+mean(arima2_mape_train)
+mean(arima2_mape_test)
+```
+
+```{r}
+pre_covid_arima = Arima(pre_covid, order=c(0,1,0), seasonal = list(order=c(1,1,0), period=7))
+pre_covid_arima_forecast = forecast(pre_covid_arima, h=length(covid))
+autoplot(pre_covid, main = "Observed v.s. Predicted Using Pre-covid data") +
+  autolayer(covid, series = "Observed")+
+  autolayer(pre_covid_arima_forecast, series = "Predicted", level=0)+
+  ylim(100, 140)
+```
+
+The training error is 0.62%. The testing error is 1.46%. 
+
+(3) SARIMA(0,1,0)(1,1,1)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima3_mape_train = rep(NA,numValid)
+arima3_mape_test = rep(NA, numValid)
+arima3_rmse_train = rep(NA,numValid)
+arima3_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(pre_covid_train) + i
+  train.ts = window(pre_covid, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima3 = Arima(train.ts, order=c(0,1,0), seasonal = list(order=c(1,1,1), period=7))
+
+  # Make prediction
+  pred = forecast(arima1, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima3_mape_train[i] = summary(arima3)[5]
+  arima3_mape_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[5]
+  
+  arima3_rmse_train[i] = summary(arima3)[2]
+  arima3_rmse_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima3_rmse_train)
+mean(arima3_rmse_test)
+mean(arima3_mape_train)
+mean(arima3_mape_test)
+```
+
+```{r}
+pre_covid_arima = Arima(pre_covid, order=c(0,1,0), seasonal = list(order=c(1,1,1), period=7))
+pre_covid_arima_forecast = forecast(pre_covid_arima, h=length(covid))
+autoplot(pre_covid, main = "Observed v.s. Predicted Using Pre-covid data") +
+  autolayer(covid, series = "Observed")+
+  autolayer(pre_covid_arima_forecast, series = "Predicted", level=0)+
+  ylim(100, 140)
+```
+
+
+The training error is 0.54%. The testing error is 1.52%. 
+
+
+(4) SARIMA(1,1,1)(1,1,1)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima4_mape_train = rep(NA,numValid)
+arima4_mape_test = rep(NA, numValid)
+arima4_rmse_train = rep(NA,numValid)
+arima4_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(pre_covid_train) + i
+  train.ts = window(pre_covid, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima4 = Arima(train.ts, order=c(1,1,1), seasonal = list(order=c(1,1,1), period=7))
+
+  # Make prediction
+  pred = forecast(arima1, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima4_mape_train[i] = summary(arima4)[5]
+  arima4_mape_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[5]
+  
+  arima4_rmse_train[i] = summary(arima4)[2]
+  arima4_rmse_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima4_rmse_train)
+mean(arima4_rmse_test)
+mean(arima4_mape_train)
+mean(arima4_mape_test)
+```
+
+```{r}
+pre_covid_arima = Arima(pre_covid, order=c(1,1,1), seasonal = list(order=c(1,1,1), period=7))
+pre_covid_arima_forecast = forecast(pre_covid_arima, h=length(covid))
+autoplot(pre_covid, main = "Observed v.s. Predicted Using Pre-covid data") +
+  autolayer(covid, series = "Observed")+
+  autolayer(pre_covid_arima_forecast, series = "Predicted", level=0)+
+  ylim(100, 140)
+```
+
+The training error is 0.54%. The testing error is 1.51%. 
+
+(5) Auto-ARIMA
+
+```{r}
+arima5 = auto.arima(pre_covid_train, seasonal=TRUE)
+```
+
+The mdoel selected by Auto-Arima is ARIMA(5,1,2).
+
+```{r}
+## Create empty vectors to store results
+arima5_mape_train = rep(NA,numValid)
+arima5_mape_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(pre_covid_train) + i
+  train.ts = window(pre_covid, end = c(2018, nTrain+196))
+
+  # Fit the Auto-ARIMA model
+  arima5 = Arima(train.ts, order=c(5,1,2))
+
+  # Make prediction
+  pred = forecast(arima5, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima5_mape_train[i] = summary(arima5)[5]
+  arima5_mape_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[5]
+  
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima5_mape_train)
+mean(arima5_mape_test)
+```
+
+The mdoel selected by Auto-Arima is ARIMA(5,1,2). The training error is 0.89%. The testing error is 1.38%. The selecting criteria of Auto-Arima is based on AIC/BIC and subject to some constraints, avoiding models with parameters that are close to the non-stationarity and non-invertibility boundaries. In addition, we use cross validation in the testing period, a model most appropriate for the first training set might not be the one for the last training set. Thus, Auto-Arima might not always return a model with the lowest MAPE error. 
+
+Forecast the covid-period with (2) SARIMA(0,1,0)(1,1,0)[7] since it gives the latest validation error (the training error is 1.51%. The testing error is 4.27%).
+
+```{r}
+# Train model for pre_covid
+## Latest model is hw1
+pre_covid_arima = Arima(pre_covid, order=c(0,1,1), seasonal = list(order=c(0,1,1), period=7))
+```
+
+```{r}
+## Forecast
+pre_covid_arima_forecast = forecast(pre_covid_arima, h=length(covid))
+pre_covid_arima_forecast
+
+## Check accuracy and residuals
+checkresiduals(pre_covid_arima_forecast$residuals)
+accuracy(pre_covid_arima_forecast, covid)
+
+error = abs(covid - pre_covid_arima_forecast$mean)
+mean(error)
+
+## Plot of validation data vs. observed values
+autoplot(pre_covid) +
+  autolayer(covid, series = "Observed")+
+  autolayer(pre_covid_arima_forecast, series = "Predicted")+
+  ylim(100, 140)
+```
+
+MAPE of testing set is 9.95%, which is about 17 times the MAPE of the training set. The ARIMA model captures the downward trend in the beginning of 2020 and assumes the trend will be going on. If we have more data, we should definitely add on the yearly seasonality to adjust this potential yearly change in trend. 
+
+--------------------------------------------------------------------
+--Function 2--
+--------------------------------------------------------------------
+
+We set aside 60 days as validation set.
+
+```{r}
+nValid2 = 60
+nTrain2 = length(price.ts)-nValid2
+price_train = window(price.ts, end = c(2018,nTrain2+196),
+                         frequency = 365)
+price_valid = window(price.ts, start = c(2018,(nTrain2+197)),
+                         frequency = 365)
+```
+
+
+(1) SARIMA(0,1,1)(0,1,1)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima1_mape_train = rep(NA,numValid)
+arima1_mape_test = rep(NA, numValid)
+arima1_rmse_train = rep(NA,numValid)
+arima1_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(price_train) + i
+  train.ts = window(price.ts, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima1 = Arima(train.ts, order=c(0,1,1), seasonal = list(order=c(0,1,1), period=7))
+
+  # Make prediction
+  pred = forecast(arima1, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima1_mape_train[i] = summary(arima1)[5]
+  arima1_mape_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[5]
+  
+  arima1_rmse_train[i] = summary(arima1)[2]
+  arima1_rmse_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima1_rmse_train)
+mean(arima1_rmse_test)
+mean(arima1_mape_train)
+mean(arima1_mape_test)
+```
+
+```{r}
+## Construct the model
+covid_arima = Arima(price.ts, order=c(0,1,1), seasonal = list(order=c(0,1,1), period=7))
+
+## Forecast
+covid_arima_forecast = forecast(covid_arima, h=30)
+covid_arima_forecast
+
+## Plot
+autoplot(price.ts, main="Forecasted Aug. Price")+
+  autolayer(covid_arima_forecast, series = "Forecasted Aug. Price")
+```
+
+
+(2) SARIMA(0,1,0)(1,1,0)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima2_mape_train = rep(NA,numValid)
+arima2_mape_test = rep(NA, numValid)
+arima2_rmse_train = rep(NA,numValid)
+arima2_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(price_train) + i
+  train.ts = window(price.ts, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima2 = Arima(train.ts, order=c(0,1,0), seasonal = list(order=c(1,1,0), period=7))
+
+  # Make prediction
+  pred = forecast(arima2, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima2_mape_train[i] = summary(arima2)[5]
+  arima2_mape_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[5]
+  
+  arima2_rmse_train[i] = summary(arima2)[2]
+  arima2_rmse_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima2_rmse_train)
+mean(arima2_rmse_test)
+mean(arima2_mape_train)
+mean(arima2_mape_test)
+```
+
+```{r}
+## Construct the model
+covid_arima = Arima(price.ts, order=c(0,1,0), seasonal = list(order=c(1,1,0), period=7))
+
+## Forecast
+covid_arima_forecast = forecast(covid_arima, h=30)
+covid_arima_forecast
+
+## Plot
+autoplot(price.ts, main="Forecasted Aug. Price")+
+  autolayer(covid_arima_forecast, series = "Forecasted Aug. Price")
+```
+
+(3) SARIMA(0,1,0)(1,1,1)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima3_mape_train = rep(NA,numValid)
+arima3_mape_test = rep(NA, numValid)
+arima3_rmse_train = rep(NA,numValid)
+arima3_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(price_train) + i
+  train.ts = window(price.ts, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima3 = Arima(train.ts, order=c(0,1,0), seasonal = list(order=c(1,1,1), period=7))
+
+  # Make prediction
+  pred = forecast(arima1, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima3_mape_train[i] = summary(arima3)[5]
+  arima3_mape_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[5]
+  
+  arima3_rmse_train[i] = summary(arima3)[2]
+  arima3_rmse_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima3_rmse_train)
+mean(arima3_rmse_test)
+mean(arima3_mape_train)
+mean(arima3_mape_test)
+```
+
+```{r}
+## Construct the model
+covid_arima = Arima(price.ts, order=c(0,1,0), seasonal = list(order=c(1,1,1), period=7))
+
+## Forecast
+covid_arima_forecast = forecast(covid_arima, h=30)
+covid_arima_forecast
+
+## Plot
+autoplot(price.ts, main="Forecasted Aug. Price")+
+  autolayer(covid_arima_forecast, series = "Forecasted Aug. Price")
+```
+
+
+
+(4) SARIMA(1,1,1)(1,1,1)[7]
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+arima4_mape_train = rep(NA,numValid)
+arima4_mape_test = rep(NA, numValid)
+arima4_rmse_train = rep(NA,numValid)
+arima4_rmse_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(price_train) + i
+  train.ts = window(price.ts, end = c(2018, nTrain+196))
+
+  # Fit the SARIMA(0,1,1)(0,1,1)[7] model
+  arima4 = Arima(train.ts, order=c(1,1,1), seasonal = list(order=c(1,1,1), period=7))
+
+  # Make prediction
+  pred = forecast(arima1, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima4_mape_train[i] = summary(arima4)[5]
+  arima4_mape_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[5]
+  
+  arima4_rmse_train[i] = summary(arima4)[2]
+  arima4_rmse_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[2]
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima4_rmse_train)
+mean(arima4_rmse_test)
+mean(arima4_mape_train)
+mean(arima4_mape_test)
+```
+
+```{r}
+## Construct the model
+covid_arima = Arima(price.ts, order=c(1,1,1), seasonal = list(order=c(1,1,1), period=7))
+
+## Forecast
+covid_arima_forecast = forecast(covid_arima, h=30)
+covid_arima_forecast
+
+## Plot
+autoplot(price.ts, main="Forecasted Aug. Price")+
+  autolayer(covid_arima_forecast, series = "Forecasted Aug. Price")
+```
+
+```{r}
+checkresiduals(covid_arima)
+```
+
+(5) Auto-ARIMA
+
+```{r}
+arima5 = auto.arima(price_train, seasonal=TRUE)
+```
+
+The mdoel selected by Auto-Arima is ARIMA(5,1,3).
+
+```{r}
+## Create empty vectors to store results
+arima5_mape_train = rep(NA,numValid)
+arima5_mape_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(price_train) + i
+  train.ts = window(price.ts,  end = c(2018, nTrain+196))
+
+  # Fit the Auto-ARIMA model
+  arima5 = Arima(train.ts, order=c(5,1,3))
+
+  # Make prediction
+  pred = forecast(arima5, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  arima5_mape_train[i] = summary(arima5)[5]
+  arima5_mape_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[5]
+  
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(arima5_mape_train)
+mean(arima5_mape_test)
+```
+
+The training error is 0.88%. The testing error is 2.15%. 
+
