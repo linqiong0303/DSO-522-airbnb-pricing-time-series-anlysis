@@ -1,0 +1,492 @@
+---
+title: "DSO 522 Group 5 Airbnb Pricing Analysis"
+author: "Group 5 (Evelyn (Wanyi) Dong, Qiongqiong Lin, Jenny Shang, Yoki (Lingrou) Wang) "
+date: "11/1/2020"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+header-includes: \usepackage{color}
+editor_options: 
+  chunk_output_type: console
+---
+
+\begin{center} 
+{\color{red} \textbf{DSO 522 Group 5 Airbnb Pricing Analysis}}
+\end{center}
+
+For this project, we want to study the impact of Covid-19 on the tourism industry by
+analyzing past price trends of Airbnb rental properties in the city of Oakland, California, and predict future rental prices by applying different time-series forecasting methods. We choose this topic because Airbnb rentals have seen significant growth in the past but are now struggling from booking declines due to Covid-19. We are interested in using time-series forecasting to predict future prices and provide valuable insights and recommendations to help Airbnb’s stakeholders develop a solid pricing strategy to achieve customer retention and sustainable growth. From a technical standpoint, Airbnb data is readily available on Airbnb’s official website (http://insideairbnb.com/get-the-data.html). It is pre-processed, well-structured and standardized, making it the ideal dataset to conduct our analysis.
+
+The complete dataset represents 722 Oakland average daily Airbnb house pricing from July 16, 2018 to July 16, 2020. 
+
+## Our analysis is built on three key objectives: 
+(1.) Understand the historical patterns of the Airbnb data by studying potential trends and  periodic components. 
+```{r}
+# import packages
+library(zoo)
+library(forecast)
+library(ggplot2)
+library(xts)
+library(readxl)
+```
+
+```{r}
+# read data
+data = read.csv("cleaned_data.csv")
+# set zoo object of price
+price = zoo(data$price, seq(from = as.Date("2018-07-16"), to = as.Date("2020-07-16"), by = 1))
+# plot the data
+autoplot(price, xlab=("Time") , ylab=("Average listing price") )
+```
+
+```{r Loading Data in TS format}
+library(forecast)
+
+price.ts = ts(data$price, start = c(2018,197), frequency=365)
+ma.trailing.roll.week = rollmean(price.ts, k = 7, align = "right")
+ma.trailing.roll.month = rollmean(price.ts, k = 30, align = "right")
+
+
+# plot the data
+autoplot(price.ts,main='Airbnb Oakland Daily Pricing', 
+         xlab=("Time") , ylab=("Average listing price") )+
+  autolayer(ma.trailing.roll.week,series='Weekly Aggregated')+
+  autolayer(ma.trailing.roll.month,series='Monthly Aggregated')
+  
+```
+
+1. Ask for advice on predicting daily v.s. monthly price of Oakland (monthly with very limited data points but does have monthly alternative data available)
+Depends on the scope of what we wanted to use them for.
+Using alternative data that's not on the same level of details - extrapolation issue - check to see what are their performances.
+
+
+** Look into why 2019 sharp drop
+** Qualitative external variable : use dummy variable to indicate those exceptional cases?
+2. Ask for clarification on COVID impact on model buildling - seperate models for post COVID?
+By looking at the data we seee a sharper decrease in 2019 compare with COVID's impact:
+* Build the model without 2020, and then make predictions in 2020
+
+Key findings 
+(-) The pricing data shows more variability in 2018 and 2020 than 2019. 
+(-) In 2018, the price shows a donward trend in the beginning, but resumes in November and reaches a peak in December (potential reason: Thanksgiving, Christmas and New Year).
+(-) In 2019, the listing price shows an upward trend. 
+(-) In 2020, the listing price drops in the beginning (potential reason: covid-19); however, starting from May, the price resumes and increases. 
+(-) Weekly seasonality is shown in the data. Since we only have two years data, it is hard to tell if there is a yearly seasonality. 
+
+(2.) Explore a variety of time-series models and determine the most appropriate candidate  model on the basis of accuracy and simplicity to analyze and forecast future prices. 
+
+(-) 
+
+**NNAR**
+
+```{r}
+pre_covid = window(price.ts, end = c(2020,12),frequency = 365)
+covid = window(price.ts, start = c(2020,13), frequency = 365)
+nValid1 = 60
+nTrain1 = length(pre_covid)-nValid1
+pre_covid_train = window(pre_covid, end = c(2018,nTrain1+196),
+                         frequency = 365)
+pre_covid_valid = window(pre_covid, start = c(2018,(nTrain1+197)),
+                         frequency = 365)
+```
+
+NNAR is equivalent to an ARIMA model but without stationarity restrictions, so we are not going to check stationarity condition.
+
+--Function 1--
+
+```{r}
+## set up exogeous variables for train and valid set
+nValid=30
+GDP<-read_xlsx("GDP.xlsm")
+gdp.xts <- xts(GDP$GDP,order.by=as.Date(GDP$DATE))
+gdp.daily<-na.locf(merge(gdp.xts, foo=zoo(NA, order.by=seq(start(gdp.xts), end(gdp.xts),
+  "day",drop=F)))[, 1])
+gdp.xreg<-gdp.daily[16:561,1]
+ur<-read.csv("unemployment_rate.csv")
+ur.xts <- xts(ur$UNRATE,order.by=as.Date(ur$DATE))
+ur.daily<-na.locf(merge(ur.xts, foo=zoo(NA, order.by=seq(start(ur.xts), end(ur.xts),
+  "day",drop=F)))[, 1])
+ur.xreg<-ur.daily[16:561,1]
+```
+
+(1) # Model 1 original NNAR
+```{r}
+
+m1_mape_train = rep(NA,nValid)
+m1_mape_test = rep(NA, nValid)
+set.seed(100)
+
+for(i in 1:nValid){
+   nTrain = length(pre_covid_train) + i-1
+   train.ts = window(pre_covid, end = c(2018, nTrain+196))
+   m1<-nnetar(train.ts)
+   pred<-forecast(m1,h=nValid)
+   m1_mape_train[i]=accuracy(m1)[5]
+   m1_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m1_mape_train)
+mean(m1_mape_test)
+```
+
+The training error is 0.03895526%. The testing error is 1.473766%.
+
+(2) # Model 2 NNAR with exogenous variable-GDP
+```{r}
+m2_mape_train = rep(NA,nValid)
+m2_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(pre_covid_train) + i-1
+   train.ts = window(pre_covid, end = c(2018, nTrain+196))
+   gdp.train=gdp.xreg[1:nTrain]
+   gdp.valid<-rep(last(gdp.train),nValid)
+   m2<-nnetar(train.ts,xreg = as.matrix(gdp.train$gdp.xts))
+   pred<-forecast(m2,h=nValid,,xreg=as.matrix(gdp.valid))
+   m2_mape_train[i]=accuracy(m2)[5]
+   m2_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m2_mape_train)
+mean(m2_mape_test)
+```
+
+The training error is 0.03135056%. The testing error is 1.519132%.
+    
+(3) Model 3 NNAR with exogenous variable-ur
+```{r}
+m3_mape_train = rep(NA,nValid)
+m3_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(pre_covid_train) + i-1
+   train.ts = window(pre_covid, end = c(2018, nTrain+196))
+   ur.train=ur.xreg[1:nTrain]
+   ur.valid<-rep(last(ur.train),nValid)
+   m3<-nnetar(train.ts,xreg = as.matrix(ur.train$ur.xts))
+   pred<-forecast(m3,h=nValid,,xreg=as.matrix(ur.valid))
+   m3_mape_train[i]=accuracy(m3)[5]
+   m3_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m3_mape_train)
+mean(m3_mape_test)
+```
+     
+The training error is 0.03067978%. The testing error is 1.441693%.     
+    
+(4) Model 4 NNAR with both of ur & GDP variables
+```{r}
+m4_mape_train = rep(NA,nValid)
+m4_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(pre_covid_train) + i-1
+   train.ts = window(pre_covid, end = c(2018, nTrain+196))
+   gdp.train=gdp.xreg[1:nTrain]
+   gdp.valid<-rep(last(gdp.train),nValid)
+   ur.train=ur.xreg[1:nTrain]
+   ur.valid<-rep(last(ur.train),nValid)
+   all.x<-cbind(ur.train$ur.xts,gdp.train$gdp.xts)
+   m4<-nnetar(train.ts,xreg = as.matrix(all.x))
+   pred<-forecast(m4,h=nValid,,xreg=as.matrix(cbind(ur.valid,gdp.valid)))
+   m4_mape_train[i]=accuracy(m4)[5]
+   m4_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m4_mape_train)
+mean(m4_mape_test)
+```
+
+The training error is 0.02860925%. The testing error is 1.497954%. 
+
+
+```{r}
+par(mfrow=c(1,2))
+Acf(pre_covid)
+Pacf(pre_covid)
+```
+
+
+ACF tails off as a damped wave pattern, Pacf totally cuts off at lag 36 but we will try p=8 here since Pacf becomes stable after lag8.
+AR(36) p=8, P=1, k=15
+
+(5) # Model 5 p=8,P=1 NNAR
+```{r}
+
+m5_mape_train = rep(NA,nValid)
+m5_mape_test = rep(NA, nValid)
+set.seed(100)
+
+for(i in 1:nValid){
+   nTrain = length(pre_covid_train) + i-1
+   train.ts = window(pre_covid, end = c(2018, nTrain+196))
+   m5<-nnetar(train.ts,p=8,P=1,repeats = 15)
+   pred<-forecast(m5,h=nValid)
+   m5_mape_train[i]=accuracy(m5)[5]
+   m5_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m5_mape_train)
+mean(m5_mape_test)
+```
+
+The training error is 0.09954521%. The testing error is 1.427045%. 
+
+We will try model 5 and Model 3 to make predictions since both they are good.
+
+Forecast after covid usng model 3:
+```{r}
+ur.valid<-rep(last(ur.xreg),nValid)
+m3<-nnetar(pre_covid,xreg = as.matrix(ur.xreg$ur.xts))
+pred<-forecast(m3,h=nValid,,xreg=as.matrix(ur.valid))
+error=accuracy(pred$mean,covid[1:30])
+error
+```
+               ME     RMSE      MAE       MPE     MAPE
+Test set 0.1705808 2.224037 1.901443 0.1323442 1.581816
+
+
+```{r}
+observed=ts(covid[1:30],start=c(2020,13),frequency=365)
+autoplot(pred)+autolayer(observed)+autolayer(m3$fitted)
+```
+```{r}
+m5_pre<-nnetar(pre_covid,p=8,P=1,repeats = 15)
+pred.covid.5<-forecast(m5_pre,h=nValid)
+error=accuracy(pred.covid.5$mean,covid[1:30])
+error
+```
+
+                ME     RMSE     MAE       MPE     MAPE
+Test set -3.780878 3.931832 3.79871 -3.152465 3.167015
+
+```{r}
+observed=ts(covid[1:30],start=c(2020,13),frequency=365)
+autoplot(pred.covid.5)+autolayer(observed)+autolayer(m5_pre$fitted)
+```
+
+For function 1, model 3 is the best.
+
+--Function 2--
+
+```{r}
+nValid2 = 60
+nTrain2 = length(price.ts)-nValid2
+price_train = window(price.ts, end = c(2018,nTrain2+196),
+                         frequency = 365)
+price_valid = window(price.ts, start = c(2018,(nTrain2+197)),
+                         frequency = 365)
+```
+
+```{r}
+nValid=30
+n=length(gdp.daily)
+gdp.xreg2<-gdp.daily[16:n,1]
+ur.xreg2<-ur.daily[16:n,1]
+```
+
+(1) Model 1 original NNAR
+```{r}
+
+m1_mape_train = rep(NA,nValid)
+m1_mape_test = rep(NA, nValid)
+set.seed(100)
+
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   m1<-nnetar(train.ts)
+   pred<-forecast(m1,h=nValid)
+   m1_mape_train[i]=accuracy(m1)[5]
+   m1_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m1_mape_train)
+mean(m1_mape_test)
+```
+
+The training error is 0.06943585%. The testing error is 4.843034%.
+
+(2) # Model 2 NNAR with exogenous variable-GDP
+```{r}
+m2_mape_train = rep(NA,nValid)
+m2_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   gdp.train=gdp.xreg2[1:nTrain]
+   gdp.valid<-rep(last(gdp.train),nValid)
+   m2<-nnetar(train.ts,xreg = as.matrix(gdp.train$gdp.xts))
+   pred<-forecast(m2,h=nValid,,xreg=as.matrix(gdp.valid))
+   m2_mape_train[i]=accuracy(m2)[5]
+   m2_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m2_mape_train)
+mean(m2_mape_test)
+```
+The training error is 0.06172964%. The testing error is 4.910987%.
+
+(3) Model 3 NNAR with exogenous variable-ur
+```{r}
+m3_mape_train = rep(NA,nValid)
+m3_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   ur.train=ur.xreg2[1:nTrain]
+   ur.valid<-rep(last(ur.train),nValid)
+   m3<-nnetar(train.ts,xreg = as.matrix(ur.train$ur.xts))
+   pred<-forecast(m3,h=nValid,,xreg=as.matrix(ur.valid))
+   m3_mape_train[i]=accuracy(m3)[5]
+   m3_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m3_mape_train)
+mean(m3_mape_test)
+```
+The training error is 0.063215%. The testing error is 5.035966%.
+
+(4) Model 4 NNAR with both of ur & GDP variables
+```{r}
+m4_mape_train = rep(NA,nValid)
+m4_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   gdp.train=gdp.xreg2[1:nTrain]
+   gdp.valid<-rep(last(gdp.train),nValid)
+   ur.train=ur.xreg2[1:nTrain]
+   ur.valid<-rep(last(ur.train),nValid)
+   all.x<-cbind(ur.train$ur.xts,gdp.train$gdp.xts)
+   m4<-nnetar(train.ts,xreg = as.matrix(all.x))
+   pred<-forecast(m4,h=nValid,,xreg=as.matrix(cbind(ur.valid,gdp.valid)))
+   m4_mape_train[i]=accuracy(m4)[5]
+   m4_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m4_mape_train)
+mean(m4_mape_test)
+```
+
+The training error is 0.05602534%. The testing error is 5.210254%.
+
+```{r}
+par(mfrow=c(1,2))
+Acf(price.ts)
+Pacf(price.ts)
+```
+ACF tails off as a damped wave pattern, Pacf totally cuts off at lag 59, p=59 will be too many weights, we will use p=8 since Pcaf becomes stable after lag 8.
+AR(36) p=59, P=1, k=15
+
+(5) # Model p=8,P=1 NNAR
+```{r}
+
+m5_mape_train = rep(NA,nValid)
+m5_mape_test = rep(NA, nValid)
+set.seed(100)
+
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   m5<-nnetar(train.ts,p=8,P=1,repeats = 15)
+   pred<-forecast(m5,h=nValid)
+   m5_mape_train[i]=accuracy(m5)[5]
+   m5_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m5_mape_train)
+mean(m5_mape_test)
+```
+
+The training error is 0.2995007%. The testing error is 4.671511%.
+
+(6)# Model p=8,P=1 NNAR with GPD
+```{r}
+m6_mape_train = rep(NA,nValid)
+m6_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   gdp.train=gdp.xreg2[1:nTrain]
+   gdp.valid<-rep(last(gdp.train),nValid)
+   m6<-nnetar(train.ts,p=8,P=1,repeats = 15,xreg = as.matrix(gdp.train$gdp.xts))
+   pred<-forecast(m6,h=nValid,,xreg=as.matrix(gdp.valid))
+   m6_mape_train[i]=accuracy(m6)[5]
+   m6_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m6_mape_train)
+mean(m6_mape_test)
+```
+The training error is 0.2673529%. The testing error is 4.783646%.
+
+(7)# Model p=8,P=1 NNAR with ur
+```{r}
+m7_mape_train = rep(NA,nValid)
+m7_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   ur.train=ur.xreg2[1:nTrain]
+   ur.valid<-rep(last(ur.train),nValid)
+   m7<-nnetar(train.ts,p=8,P=1,repeats = 15,xreg = as.matrix(ur.train$ur.xts))
+   pred<-forecast(m7,h=nValid,,xreg=as.matrix(ur.valid))
+   m7_mape_train[i]=accuracy(m7)[5]
+   m7_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m7_mape_train)
+mean(m7_mape_test)
+```
+
+The training error is 0.2630437%. The testing error is 4.807237%.
+
+(8) Model p=8,P=1 NNAR with ur & GDP
+```{r}
+m8_mape_train = rep(NA,nValid)
+m8_mape_test = rep(NA, nValid)
+set.seed(100)
+for(i in 1:nValid){
+   nTrain = length(price_train) + i-1
+   train.ts = window(price.ts, end = c(2018, nTrain+196))
+   gdp.train=gdp.xreg2[1:nTrain]
+   gdp.valid<-rep(last(gdp.train),nValid)
+   ur.train=ur.xreg2[1:nTrain]
+   ur.valid<-rep(last(ur.train),nValid)
+   all.x<-cbind(ur.train$ur.xts,gdp.train$gdp.xts)
+   m8<-nnetar(train.ts,p=8,P=1,repeats = 15,xreg = as.matrix(all.x))
+   pred<-forecast(m8,h=nValid,,xreg=as.matrix(cbind(ur.valid,gdp.valid)))
+   m8_mape_train[i]=accuracy(m8)[5]
+   m8_mape_test[i]=accuracy(pred$mean, pre_covid_valid[i:i+nValid-1])[5]}
+
+mean(m8_mape_train)
+mean(m8_mape_test)
+```
+The training error is 0.2562018%. The testing error is 4.852609%.
+
+Model 1,2,3,4,5,6,7,8 are overfitting, model 5 is best. 
+
+Forecast Auguest by using model 5:
+```{r}
+m5<-nnetar(price.ts,p=8,P=1,repeats = 15)
+pred5<-forecast(m5,h=nValid)
+pred5
+```
+
+```{r}
+pred5=ts(pred5$mean,start=c(2020,213),frequency=365)
+```
+
+
+(3.) Implement the selected candidate model to forecast both short-term and long-term Airbnb  average listing price in Oakland, California. 
+
+## With our objectives in mind, we strive to deliver to Airbnb stakeholders a guidance on listing  price. Our analysis will focus on answering four important questions: 
+
+(1.) What are the  determinative factors of average listing prices? 
+
+(2.) Are there any lags between Covid-19 outbreak  and rental prices? 
+
+(3.) Have vacation rentals recovered from the pandemic? 
+
+(4.) Are there any  important external factors that play a role in determining the average listing price? In the future, we can apply our analysis to broader geographic areas. 
+
+Some important variables in our study include the overall average listing price of the  selected city, and the average listing price per room type (entire home/apt or private room).  Additional variables we want to consider include the city’s unemployment rate over time, which  can be found on the U.S. Bureau of Labor Statistics website (https://www.bls.gov), as well as  general economic indicators such as GDP growth, which can be obtained from St. Louis Fed  (https://fred.stlouisfed.org/). 
+
+At the end of our study, we expect to draw critical insights from historical patterns in  order to assist Airbnb’s stakeholders. We aim to provide Airbnb hosts with an understanding of  the determinative factors affecting property listing price such that they can adjust ahead of time,  suggest an accurate, simple and effective time-series forecasting model for Airbnb to predict  average short-term rental pricing and long-term rental pricing, and explore potential solutions for  Airbnb to identify risks and launch effective promotion or recovery plans in this Covid-19 era.
+
