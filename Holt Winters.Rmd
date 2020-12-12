@@ -1,0 +1,277 @@
+---
+title: "DSO 522 Group 5 Airbnb Pricing Analysis"
+author: "Group 5 (Evelyn (Wanyi) Dong, Qiongqiong Lin, Jenny Shang, Yoki (Lingrou) Wang) "
+date: "11/1/2020"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+header-includes: \usepackage{color}
+editor_options: 
+  chunk_output_type: console
+---
+
+\begin{center} 
+{\color{red} \textbf{DSO 522 Group 5 Airbnb Pricing Analysis}}
+\end{center}
+
+For this project, we want to study the impact of Covid-19 on the tourism industry by
+analyzing past price trends of Airbnb rental properties in the city of Oakland, California, and predict future rental prices by applying different time-series forecasting methods. We choose this topic because Airbnb rentals have seen significant growth in the past but are now struggling from booking declines due to Covid-19. We are interested in using time-series forecasting to predict future prices and provide valuable insights and recommendations to help Airbnb’s stakeholders develop a solid pricing strategy to achieve customer retention and sustainable growth. From a technical standpoint, Airbnb data is readily available on Airbnb’s official website (http://insideairbnb.com/get-the-data.html). It is pre-processed, well-structured and standardized, making it the ideal dataset to conduct our analysis.
+
+The complete dataset represents 722 Oakland average daily Airbnb house pricing from July 16, 2018 to July 16, 2020. 
+
+## Our analysis is built on three key objectives: 
+(1.) Understand the historical patterns of the Airbnb data by studying potential trends and  periodic components. 
+
+```{r}
+# import packages
+library(zoo)
+library(forecast)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+# read data
+data = read.csv("cleaned_data.csv")
+# set zoo object of price
+price = zoo(data$price, seq(from = as.Date("2018-07-16"), to = as.Date("2020-07-16"), by = 1))
+# plot the data
+autoplot(price, xlab=("Time") , ylab=("Average listing price") )
+```
+
+For example, data with daily observations might have a weekly seasonality (frequency=7) 
+https://robjhyndman.com/hyndsight/seasonal-periods/
+
+<<<<<<< HEAD
+```{r Loading Data in TS format}
+price.ts = ts(data$price, start = c(2018,1), frequency=7)
+
+# plot the data
+autoplot(price.ts,main='Airbnb Oakland Daily Pricing', 
+         xlab=("Time") , ylab=("Average listing price") )
+
+```
+
+1. Ask for advice on predicting daily v.s. monthly price of Oakland (monthly with very limited data points but does have monthly alternative data available)
+Depends on the scope of what we wanted to use them for.
+Using alternative data that's not on the same level of details - extrapolation issue - check to see what are their performances.
+
+
+** Look into why 2019 sharp drop
+** Qualitative external variable : use dummy variable to indicate those exceptional cases?
+2. Ask for clarification on COVID impact on model buildling - seperate models for post COVID?
+By looking at the data we seee a sharper decrease in 2019 compare with COVID's impact:
+* Build the model without 2020, and then make predictions in 2020
+
+We see that the coefficient is far away from 0 and P value also did not show statistical significance, which means this is not a random walk.
+
+Key findings 
+(-) The pricing data shows more variability in 2018 and 2020 than 2019. 
+(-) In 2018, the price shows a donward trend in the beginning, but resumes in November and reaches a peak in December (potential reason: Thanksgiving, Christmas and New Year).
+(-) In 2019, the listing price shows an upward trend. 
+(-) In 2020, the listing price drops in the beginning (potential reason: covid-19); however, starting from May, the price resumes and increases. 
+(-) Weekly seasonality is shown in the data. Since we only have two years data, it is hard to tell if there is a yearly seasonality. 
+
+Since we want to analyze the effect of Covid-19, we separate the data to pre-2020 and 2020-onwards, and separately construct models for each period. 
+
+```{r}
+# Separate the two periods
+pre_covid = window(price.ts, end = c(2018,546),frequency = 7)
+covid = window(price.ts, start = c(2018,547), frequency = 7)
+```
+
+(2.) Explore a variety of time-series models and determine the most appropriate candidate  model on the basis of accuracy and simplicity to analyze and forecast future prices. 
+
+**Holt-Winters Exponential Smoothing**
+
+--------------------------------------------------------------------
+--Function 1--
+--------------------------------------------------------------------
+
+We set aside 60 days as validation set.
+
+
+```{r}
+nValid1 = 60
+nTrain1 = length(pre_covid)-nValid1
+pre_covid_train = window(pre_covid, end = c(2018,nTrain1),
+                         frequency = 7)
+pre_covid_valid = window(pre_covid, start = c(2018,(nTrain1+1)),
+                         frequency = 7)
+```
+
+
+Function 1 predictions
+Create a loop that repeated does 30 day forecasting pulling in one additional data at a time.
+
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+hw1_pred = rep(NA,60)
+hw1_mape_train = rep(NA,numValid)
+hw1_mape_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(pre_covid_train) + i
+  train.ts = window(pre_covid, start = c(2018,1), end = c(2018, nTrain))
+
+  # Fit the HW MAdA model
+  hw1 = ets(train.ts, model = "ZZZ")
+
+  # Make prediction
+  pred = forecast(hw1, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  hw1_mape_train[i] = summary(hw1)[5]
+  hw1_mape_test[i] = accuracy(pred$mean, pre_covid_valid[i:i+numValid])[5]
+  
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(hw1_mape_train)
+mean(hw1_mape_test)
+```
+
+The training error is 0.52%. The testing error is 1.52%. 
+
+
+Forecast the covid-period.
+
+```{r}
+# Train model for pre_covid
+## Latest model is hw1
+hw1
+pre_covid_hw = ets(pre_covid, model = "MAA", damped = TRUE)
+```
+
+HW parameter: Multiplicative error, dampened-additive trend, additive seasonality.
+Model shows MAPE of 0.53% on training data.
+
+```{r}
+## Forecast
+hw1_forecast = forecast(pre_covid_hw, h=length(covid))
+hw1_forecast
+
+## Check accuracy and residuals
+checkresiduals(hw1_forecast$residuals)
+accuracy(hw1_forecast, covid)
+
+error = abs(covid - hw1_forecast$mean)
+mean(error)
+
+## Plot of validation data vs. observed values
+autoplot(pre_covid) +
+  autolayer(covid, series = "Observed")+
+  autolayer(hw1_forecast, series = "Predicted", level = 0)
+```
+
+MAPE of testing set is 2.94%, which is about 6 times the MAPE of the training set. Assumptions not met since residuals show non-stationarity, ACF plot shows significance at lags of approx. 5, 13, and 22 which suggests autocorrelation at these lags. The residuals are not very normally distributed. As shown in the plot, the model does not capture the decline in 2020 due to covid. On average, it's off by about _$3.48_. Given that in the year 2019, the price range is approx. between _$115_ and _$130_, a forecast error of about _$3.50_ is about 23% off from the actual value. 
+
+
+
+--------------------------------------------------------------------
+--Function 2--
+--------------------------------------------------------------------
+
+We set aside 60 days as validation set.
+
+```{r}
+nValid2 = 60
+nTrain2 = length(price.ts)-nValid2
+price_train = window(price.ts, end = c(2018,nTrain2),
+                         frequency = 7)
+price_valid = window(price.ts, start = c(2018,(nTrain2+1)),
+                         frequency = 7)
+```
+
+Model
+
+```{r}
+## Set validation days
+numValid = 30
+
+## Create empty vectors to store results
+hw2_mape_train = rep(NA,numValid)
+hw2_mape_test = rep(NA, numValid)
+
+for(i in 1:numValid){
+
+  # Split the data into training and validation
+
+  nTrain = length(price_train) + i
+  train.ts = window(price.ts, start = c(2018,1), end = c(2018, nTrain))
+
+  # Fit the HW MAdA model
+  hw2 = ets(train.ts, model = "ZZZ")
+
+  # Make prediction
+  pred = forecast(hw2, h=numValid)
+
+  # Store the MAPE (Testing MAPE is the 10th value)
+  hw2_mape_train[i] = summary(hw2)[5]
+  hw2_mape_test[i] = accuracy(pred$mean, price_valid[i:i+numValid])[5]
+  
+}
+
+# Average of the training and testing MAPE is the error of the model
+mean(hw2_mape_train)
+mean(hw2_mape_test)
+```
+
+The training error is 0.68%. The testing error is 1.97%. 
+
+Forecast the covid-period.
+
+```{r}
+# Train model for pre_covid
+## Latest model is hw2
+hw2
+
+## Residuals
+checkresiduals(hw2$residuals)
+
+```
+
+The HW model has Multiplicative errors, an additive, damped trend, and multiplicative seasonality.
+
+
+Using this model with parts of Covid data as training set, the training MAPE is 0.68% while the testing MAPE is 1.97%, which about than 3x the training error. Therefore, although we only expect the prediction to differ from the actual value by 2.21% on average, this model is not a robust model. The assumptions are also validated as residuals suffer from non-stationarity and autocorrelation.
+
+Forecast for the month of August
+
+```{r}
+## Construct model
+covid_hw = ets(price.ts, model = "MAM", damped = TRUE)
+
+## Forecast
+hw2_forecast = forecast(covid_hw, h=30)
+hw2_forecast
+
+## Plot
+autoplot(price.ts)+
+  autolayer(hw2_forecast, series = "Forecasted Aug. Price", level = 0)
+```
+
+
+(3.) Implement the selected candidate model to forecast both short-term and long-term Airbnb  average listing price in Oakland, California. 
+
+## With our objectives in mind, we strive to deliver to Airbnb stakeholders a guidance on listing  price. Our analysis will focus on answering four important questions: 
+
+(1.) What are the  determinative factors of average listing prices? 
+
+(2.) Are there any lags between Covid-19 outbreak  and rental prices? 
+
+(3.) Have vacation rentals recovered from the pandemic? 
+
+(4.) Are there any  important external factors that play a role in determining the average listing price? In the future, we can apply our analysis to broader geographic areas. 
+
+Some important variables in our study include the overall average listing price of the  selected city, and the average listing price per room type (entire home/apt or private room).  Additional variables we want to consider include the city’s unemployment rate over time, which  can be found on the U.S. Bureau of Labor Statistics website (https://www.bls.gov), as well as  general economic indicators such as GDP growth, which can be obtained from St. Louis Fed  (https://fred.stlouisfed.org/). 
+
+At the end of our study, we expect to draw critical insights from historical patterns in  order to assist Airbnb’s stakeholders. We aim to provide Airbnb hosts with an understanding of  the determinative factors affecting property listing price such that they can adjust ahead of time,  suggest an accurate, simple and effective time-series forecasting model for Airbnb to predict  average short-term rental pricing and long-term rental pricing, and explore potential solutions for  Airbnb to identify risks and launch effective promotion or recovery plans in this Covid-19 era.
+
