@@ -1,0 +1,126 @@
+---
+title: "DSO 522 Group 5 Airbnb Pricing Analysis"
+author: "Group 5 (Evelyn (Wanyi) Dong, Qiongqiong Lin, Jenny Shang, Yoki (Lingrou) Wang) "
+date: "11/1/2020"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+header-includes: \usepackage{color}
+editor_options: 
+  chunk_output_type: console
+---
+
+\begin{center} 
+{\color{red} \textbf{DSO 522 Group 5 Airbnb Pricing Analysis}}
+\end{center}
+
+For this project, we want to study the impact of Covid-19 on the tourism industry by
+analyzing past price trends of Airbnb rental properties in the city of Oakland, California, and predict future rental prices by applying different time-series forecasting methods. We choose this topic because Airbnb rentals have seen significant growth in the past but are now struggling from booking declines due to Covid-19. We are interested in using time-series forecasting to predict future prices and provide valuable insights and recommendations to help Airbnb’s stakeholders develop a solid pricing strategy to achieve customer retention and sustainable growth. From a technical standpoint, Airbnb data is readily available on Airbnb’s official website (http://insideairbnb.com/get-the-data.html). It is pre-processed, well-structured and standardized, making it the ideal dataset to conduct our analysis.
+
+The complete dataset represents 722 Oakland average daily Airbnb house pricing from July 16, 2018 to July 16, 2020. 
+
+## Our analysis is built on three key objectives: 
+(1.) Understand the historical patterns of the Airbnb data by studying potential trends and  periodic components. 
+
+```{r}
+# import packages
+library(zoo)
+library(forecast)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+# read data
+data = read.csv("cleaned_data.csv")
+# set zoo object of price
+price = zoo(data$price, seq(from = as.Date("2018-07-16"), to = as.Date("2020-07-16"), by = 1))
+# plot the data
+autoplot(price, xlab=("Time") , ylab=("Average listing price") )
+# load data in ts format 
+## price.ts = ts(data$price, start = c(2018,197), frequency=7)
+price.ts = ts(data$price, start = c(2018,197), frequency=365)
+# function 1 
+price.1 = window(price.ts, end=c(2020, 13))
+nValid = 60
+price.1.train = window(price.1, end=c(2020, 13-nValid))
+price.1.test = window(price.1, start=c(2020, 13-nValid+1))
+# function 2
+price.2.train = window(price.ts, end=c(2020, 188-nValid))
+price.2.test = window(price.ts, start=c(2020, 188-nValid+1))
+```
+
+
+Yoki's Test with Naive
+```{r}
+library(forecast)
+## Use all train data to build naive model and show error on test
+
+## Proof of using h=60 automatically uses prediction value to forecast
+
+## Example: 3 Step forward naive forecasting values directly:
+naive3step<-snaive(price.1.train,h=3)$mean
+
+
+## Using the predicted value at step 1 and append it as actual value:
+naive1step<-snaive(price.1.train,h=1)$mean
+
+updatetrain<-ts(append(price.1.train,naive1step),start=c(2018,197),frequency=365)
+
+# Calculating How Many New Forecast Values Added
+length(updatetrain)-length(price.1.train)
+
+# Calculating step 2
+naive1step.step2<-snaive(updatetrain,h=1)$mean
+updatetrain2<-ts(append(updatetrain,naive1step.step2),start=c(2018,197),frequency=365)
+length(updatetrain2)-length(price.1.train)
+
+# Forecasting 3 Steps Ahead:
+naive1step.step3<-snaive(updatetrain2,h=1)$mean
+
+# We see both calculations gives the same predictions
+naive1step.step3-naive3step[3]
+
+```
+
+
+*START NAIVE FORECAST*
+```{r}
+## Function 1: Use all train data to build naive model and show error on test
+naive30step<-snaive(price.1.train,h=60)$mean
+
+mean(naive30step-price.1.test[1:30])
+naive30step[31:sum(29+31)]
+error<-rep(NA, 30)
+abserror<-rep(NA, 30)
+for (i in 1:30){
+  naiveforecast=naive30step[i:sum(29+i)]
+  actual=price.1.test[i:sum(29+i)]
+  mean=mean(naiveforecast-actual)
+  abs_error=mean(abs(naiveforecast-actual))
+  error[i]=mean
+  abserror[i]=abs_error
+}
+error
+mean(error)
+mean(abserror)
+
+
+## Function 2: Use all train data to build naive model and show error on test
+naive30step_func2<-snaive(price.2.train,h=60)$mean
+error_func2<-rep(NA, 30)
+abserror<-rep(NA, 30)
+
+for (i in 1:30){
+  naiveforecast=naive30step_func2[i:sum(29+i)]
+  actual=price.2.test[i:sum(29+i)]
+  mean=mean(naiveforecast-actual)
+  mean_abs=mean(abs(naiveforecast-actual))
+  error_func2[i]=mean
+  abserror[i]=mean_abs
+}
+mean(error_func2)
+mean(abserror)
+
+```
