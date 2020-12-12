@@ -1,0 +1,332 @@
+---
+title: "decision tree"
+author: "qiongqiong lin"
+date: "11/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(cvTools)  #  rmspe 
+library(tree)
+library(readxl)
+library(ggplot2)
+library(zoo)
+library(xts)
+library(forecast)
+data = read_xlsx("cleaned_data.xlsm")
+GDP<-read_xlsx("GDP.xlsm")
+ur<-read_xlsx("unemployment_rate.xlsm")
+```
+
+
+
+```{r}
+# predict external variables for next two month
+ur_ts<-ts(ur[,2],start=c(2018,7),end = c(2020,7),frequency = 12)
+plot(ur_ts)
+
+```
+
+```{r}
+gdp_ts<-ts(GDP[,2],start=c(2018,7),end = c(2020,7),frequency = 12)
+plot(gdp_ts)
+```
+
+```{r}
+par(mfrow=c(1,2))
+acf(ur_ts)
+pacf(ur_ts)
+```
+
+```{r}
+par(mfrow=c(1,2))
+acf(gdp_ts)
+pacf(gdp_ts)
+```
+
+
+```{r}
+e_m1<-rollmean(ur_ts,k=3,align = 'right')
+ur_pred<-forecast(e_m1,h=2)
+ur_pred$mean
+```
+
+```{r}
+e_m2<-rollmean(gdp_ts,k=2,align = 'right')
+gdp_pred<-forecast(e_m2,h=2)
+```
+
+**Function 1**
+```{r}
+gdp_xts <- xts(GDP$GDP,order.by=as.Date(GDP$DATE))
+n=length(gdp.daily)
+gdp_daily<-na.locf(merge(gdp_xts, foo=zoo(NA, order.by=seq(start(gdp_xts), end(gdp_xts),"day",drop=F)))[, 1])
+gdp.xreg<-gdp.daily[1:546,1]
+ur_xts <- xts(ur$UNRATE,order.by=as.Date(ur$DATE))
+ur_daily<-na.locf(merge(ur_xts, foo=zoo(NA, order.by=seq(start(ur_xts), end(ur_xts),"day",drop=F)))[, 1])
+ur.xreg<-ur.daily[1:546,1]
+price_ts<-xts(data$price,order.by=as.Date(data$date))
+price_xreg<-price_ts[1:546]
+newdata1<-data.frame(cbind(ur.xreg,gdp.xreg,price_xreg))
+```
+
+
+```{r}
+set.seed(3333)
+part <- sample(nrow(newdata1)) 
+newdata1$Group <- 
+  ifelse((part < nrow(newdata1)/(3/2)),1,2)
+newdata1$Group <- 
+  factor(newdata1$Group,levels=c(1,2),labels=c("TRAIN","TEST"))
+table(newdata1$Group)
+head(newdata1,3) 
+data.train1 <- 
+  subset(newdata1, subset = (Group == "TRAIN"))
+data.test1 <- 
+  subset(newdata1, subset = (Group == "TEST"))
+```
+
+```{r}
+model1<-{price_xreg~ur.xts+gdp.xts}
+tmodel1<-tree(model1,data=data.train1)
+plot(tmodel1)
+text(tmodel1,pretty=1)
+```
+```{r}
+tmodel1
+```
+
+```{r}
+data.train1$fit<-predict(tmodel1,newdata=data.train1)
+mape(data.train1$price_xreg,data.train1$fit)
+cor(data.train1$price_xreg,data.train1$fit)^2
+```
+
+```{r}
+data.test1$test.fit<-predict(tmodel1,newdata=data.test1)
+mape(data.test1$price_xreg,data.test1$test.fit)
+cor(data.test1$price_xreg,data.test1$test.fit)^2
+```
+```{r}
+ur1<-window(ur_ts,start=c(2018,7),end = c(2020,1),frequency = 12)
+gdp1<-window(gdp_ts,start=c(2018,7),end = c(2020,1),frequency = 12)
+par(mfrow=c(1,2))
+acf(ur1)
+pacf(ur1)
+```
+```{r}
+par(mfrow=c(1,2))
+acf(gdp1)
+pacf(gdp1)
+```
+```{r}
+p1<-Arima(ur1,order=c(1,0,0))
+ur1_pred<-forecast(p1,h=2)
+p2<-Arima(gdp1,order=c(1,0,0))
+gdp1_pred<-forecast(p2,h=2)
+```
+
+```{r}
+#make prediction
+month1=seq(as.Date("2020/1/13"),as.Date("2020/2/11"), by="day")
+ur_1=rep(ur1_pred$mean[1],19)
+ur_2=rep(ur1_pred$mean[2],11)
+gpd_1=rep(gdp1_pred$mean[1],19)
+gpd_2=rep(gdp1_pred$mean[2],11)
+ur.xts=c(ur_1,ur_2)
+gdp.xts=c(gpd_1,gpd_2)
+pre_data1<-data.frame(ur.xts,gdp.xts,months=as.Date(month1))
+tree.pred1<-predict(tmodel1,newdata=pre_data1)
+
+tree.pred1
+```
+Prediction for 2020/1/13 - 2020/2/11 is 124.0663.
+
+
+**Function 2**
+
+```{r}
+gdp_xts <- xts(GDP$GDP,order.by=as.Date(GDP$DATE))
+n=length(gdp.daily)
+gdp_daily<-na.locf(merge(gdp_xts, foo=zoo(NA, order.by=seq(start(gdp_xts), end(gdp_xts),"day",drop=F)))[, 1])
+ur_xts <- xts(ur$UNRATE,order.by=as.Date(ur$DATE))
+ur_daily<-na.locf(merge(ur_xts, foo=zoo(NA, order.by=seq(start(ur_xts), end(ur_xts),
+  "day",drop=F)))[, 1])
+price_ts<-xts(data$price,order.by=as.Date(data$date))
+newdata<-data.frame(cbind(ur_daily,gdp_daily,price_ts))
+```
+
+#set up train and test set
+```{r}
+set.seed(4444)
+partition <- sample(nrow(newdata)) 
+newdata$Group <- 
+  ifelse((partition < nrow(newdata)/(3/2)),1,2)
+newdata$Group <- 
+  factor(newdata$Group,levels=c(1,2),labels=c("TRAIN","TEST"))
+table(newdata$Group)
+head(newdata,3) 
+data.train <- 
+  subset(newdata, subset = (Group == "TRAIN"))
+data.test <- 
+  subset(newdata, subset = (Group == "TEST"))
+varis<-data.train[,c("ur_xts","gdp_xts","price_ts")]
+cormat <- cor(as.matrix(varis))
+line <- cormat["price_ts",]
+sort(abs(line),decreasing = TRUE)
+```
+```{r}
+model<-{price_ts~ur_xts+gdp_xts}
+tree.model<-tree(model,data=data.train)
+plot(tree.model)
+text(tree.model,pretty=1)
+```
+```{r}
+tree.model
+```
+
+```{r}
+?mape
+data.train$fit<-predict(tree.model,newdata=data.train)
+mape(data.train$price_ts,data.train$fit)
+cor(data.train$price_ts,data.train$fit)^2
+```
+```{r}
+data.test$test.fit<-predict(tree.model,newdata=data.test)
+mape(data.test$price_ts,data.test$test.fit)
+cor(data.test$price_ts,data.test$test.fit)^2
+```
+
+
+**make prediction**
+```{r}
+month=seq(as.Date("2020/7/17"),as.Date("2020/8/15"), by="day")
+ur_xts1=rep(ur_pred$mean[1],15)
+ur_xts2=rep(ur_pred$mean[2],15)
+gpd_xts1=rep(gdp_pred$mean[1],15)
+gpd_xts2=rep(gdp_pred$mean[2],15)
+ur_xts=c(ur_xts1,ur_xts2)
+gdp_xts=c(gpd_xts1,gpd_xts2)
+pre_data<-data.frame(ur_xts,gpd_xts,months=as.Date(month))
+tree.pred<-predict(tree.model,newdata=pre_data)
+
+tree.pred
+
+```
+
+Prediction for 2020/7/17 - 2020/8/15 is 119.6571.
+
+**linear regression**
+
+**Function 1**
+```{r}
+pairs(cbind(Price=newdata1$price_xreg,UR=newdata1$ur.xts,GDP=newdata1$gdp.xts))
+pairs(newdata1)
+gdp<-ts(gdp.daily[1:546,1],start=c(2018,197),frequency=365)
+ur<-ts(ur.daily[1:546,1],start=c(2018,197),frequency=365)
+price<-ts(price_ts[1:546],start=c(2018,197),frequency=365)
+new_data<-ts.intersect(gdp,ur,price)
+r0<-tslm(price~trend+ur+gdp)
+r1<-tslm(price~ur+gdp)
+r2<-tslm(price~ur)
+r3<-tslm(price~gdp)
+```
+
+```{r}
+accuracy(r0)
+summary(r0)$adj.r.squared
+```
+
+```{r}
+accuracy(r1)
+summary(r1)$adj.r.squared
+```
+
+
+```{r}
+accuracy(r2)
+summary(r2)$adj.r.squared
+```
+
+```{r}
+accuracy(r3)
+summary(r3)$adj.r.squared
+```
+
+Since model r0 is the best model, we will use it to make prediction.
+
+```{r}
+month1=seq(as.Date("2020/1/13"),as.Date("2020/2/11"), by="day")
+ur_1=rep(ur1_pred$mean[1],19)
+ur_2=rep(ur1_pred$mean[2],11)
+gpd_1=rep(gdp1_pred$mean[1],19)
+gpd_2=rep(gdp1_pred$mean[2],11)
+ur.xts=c(ur_1,ur_2)
+gdp.xts=c(gpd_1,gpd_2)
+pre_data1<-data.frame(ur.xts,gdp.xts,months=as.Date(month1))
+gdp<- ts(xts(pre_data1$gdp.xts,order.by=as.Date(pre_data1$months)),start = c(2020,13),frequency = 365)
+
+ur<- ts(xts(pre_data1$ur.xts,order.by=as.Date(pre_data1$months)),start = c(2020,13),frequency = 365)
+n_data<-data.frame(ur,gdp)
+
+forecast(r0,newdata=n_data)
+
+```
+
+
+**Function 2**
+```{r}
+pairs(cbind(Price=newdata$price_ts,UR=newdata$ur.xts,GDP=newdata$gdp.xts))
+pairs(newdata)
+gdp2<-ts(gdp.daily[,1],start=c(2018,197),frequency=365)
+ur2<-ts(ur.daily[,1],start=c(2018,197),frequency=365)
+price2<-ts(price_ts,start=c(2018,197),frequency=365)
+new_data2<-ts.intersect(gdp2,ur2,price2)
+r4<-tslm(price2~trend+ur2+gdp2)
+r5<-tslm(price2~ur2+gdp2)
+r6<-tslm(price2~ur2)
+r7<-tslm(price2~gdp2)
+```
+
+```{r}
+accuracy(r4)
+summary(r4)$adj.r.squared
+```
+
+```{r}
+accuracy(r5)
+summary(r5)$adj.r.squared
+```
+
+```{r}
+accuracy(r6)
+summary(r6)$adj.r.squared
+```
+
+```{r}
+accuracy(r7)
+summary(r7)$adj.r.squared
+```
+
+```{r}
+month=seq(as.Date("2020/7/17"),as.Date("2020/8/15"), by="day")
+ur_xts1=rep(ur_pred$mean[1],15)
+ur_xts2=rep(ur_pred$mean[2],15)
+gpd_xts1=rep(gdp_pred$mean[1],15)
+gpd_xts2=rep(gdp_pred$mean[2],15)
+ur_xts=c(ur_xts1,ur_xts2)
+gdp_xts=c(gpd_xts1,gpd_xts2)
+pre_data<-data.frame(ur_xts,gpd_xts,months=as.Date(month))
+gdp2<- ts(xts(pre_data$gpd_xts,order.by=as.Date(pre_data$months)),start = c(2020,13),frequency = 365)
+
+ur2<- ts(xts(pre_data$ur_xts,order.by=as.Date(pre_data$months)),start = c(2020,13),frequency = 365)
+
+n_data2<-data.frame(ur2,gdp2)
+
+forecast(r4,newdata=n_data2)
+```
+
